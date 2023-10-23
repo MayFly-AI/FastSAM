@@ -4,7 +4,7 @@ import ast
 import torch
 from utils.tools import convert_box_xywh_to_xyxy
 import cv2
-from mayfly.videocapture import VideoCapture
+from mayfly.sensorcapture import SensorCapture
 import matplotlib.pyplot as plt
 import time
 import numpy as np
@@ -116,24 +116,22 @@ def main(args):
 
     use_cuda=True
     config = ''
-    cap = VideoCapture(list(range(64)), config)
+    cap = SensorCapture(list(range(64)), config)
     path = './'
     frame_idx = -1
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     output = cv2.VideoWriter('output.mp4', fourcc, 10, (1280,720))
-    t_fps = 0
     while True:
-        t0 = time.time()
-        frames = cap.read()
+        capture = cap.read()
+        if capture['type'] != "camera":
+            continue
         frame_idx += 1
-        frm = frames[0] # It may have more than 1 frame if sync cameras or ToF. We assume 1 frame
+        frm = capture['frames'][0] # It may have more than 1 frame if sync cameras or ToF. We assume 1 frame
         if use_cuda:
             arr = torch.from_dlpack(frm['image']).cpu().numpy()
         else:
             arr = np.from_dlpack(frm['image']).copy()
         img = cv2.cvtColor(arr[:,:,:3], cv2.COLOR_RGB2BGR)
-        t1 = time.time()
-        print('Time read frame and convert to BGR (ms): ',1000.0*(t1-t0))
         everything_results = model(
             img,
             device=args.device,
@@ -142,9 +140,8 @@ def main(args):
             conf=args.conf,
             iou=args.iou,
             )
-        t2 = time.time()
-        print('Time model() (ms): ',1000.0*(t2-t1))
 
+        t0 = time.time()
         bboxes = None
         points = None
         point_label = None
@@ -163,22 +160,15 @@ def main(args):
             point_label = args.point_label
         else:
             ann = prompt_process.everything_prompt()
-        t3 = time.time()
-        print('Time prompt (ms): ',1000.0*(t3-t2))
+        print('Time (ms) prompt: ',1000.0*(time.time()-t0))
 
+        t0 = time.time()
         res = fast_show_mask_gpu_blend(img, ann)
         res = (res*255.).astype(np.uint8)
-        t4 = time.time()
-        print('Time plot (ms): ',1000.0*(t4-t3))
+        print('Time (ms) plot: ',1000.0*(time.time()-t0))
         cv2.imshow('FastSAM',res)
         cv2.waitKey(1)
-
         output.write(res)
-
-        t_prev = t_fps
-        t_fps = time.time()
-        print('FPS:', 1./(t_fps-t_prev))
-
 
 if __name__ == "__main__":
     args = parse_args()
